@@ -1,0 +1,142 @@
+import {
+  agHelper,
+  assertHelper,
+  draggableWidgets,
+  entityExplorer,
+  homePage,
+  locators,
+} from "../../../../support/Objects/ObjectsCore";
+
+describe("Slug URLs", () => {
+  let applicationName;
+  let applicationId;
+
+  it("1. Checks URL redirection from legacy URLs to slug URLs", () => {
+    applicationId = localStorage.getItem("applicationId");
+    cy.location("pathname").then((pathname) => {
+      const pageId = pathname.split("/")[3]?.split("-").pop();
+      cy.visit(`/applications/${applicationId}/pages/${pageId}/edit`, {
+        timeout: Cypress.config().pageLoadTimeout,
+      }).then(() => {
+        agHelper.WaitUntilEleAppear(locators._sidebar);
+        cy.location("pathname").then((pathname) => {
+          const pageId = pathname.split("/")[3]?.split("-").pop();
+          const appName = localStorage
+            .getItem("appName")
+            .replace(/\s+/g, "-")
+            .toLowerCase();
+          expect(pathname).to.be.equal(`/app/${appName}/page1-${pageId}/edit`);
+        });
+      });
+    });
+  });
+
+  it("2. Checks if application slug updates & page slug updates on the URL when application name/page name changes", () => {
+    cy.generateUUID().then((appName) => {
+      applicationName = appName;
+      homePage.RenameApplication(applicationName);
+      assertHelper.AssertNetworkStatus("updateApplication");
+      cy.location("pathname").then((pathname) => {
+        const pageId = pathname.split("/")[3]?.split("-").pop();
+        expect(pathname).to.be.equal(`/app/${appName}/page1-${pageId}/edit`);
+      });
+    });
+    entityExplorer.RenameEntityFromExplorer("Page1", "Renamed");
+    assertHelper.AssertNetworkStatus("updatePage");
+    // cy.location("pathname").then((pathname) => {
+    cy.url().then((url) => {
+      const urlObject = new URL(url);
+      const pathname = urlObject.pathname;
+      const pageId = pathname.split("/")[3]?.split("-").pop();
+      expect(pathname).to.be.equal(
+        `/app/${applicationName}/renamed-${pageId}/edit`,
+      );
+    });
+  });
+
+  it("3. Check the url of old applications, upgrades version and compares appsmith.URL values", () => {
+    cy.request("PUT", `/api/v1/applications/${applicationId}`, {
+      applicationVersion: 1,
+    }).then((response) => {
+      const application = response.body.data;
+      expect(application.applicationVersion).to.equal(1);
+      homePage.NavigateToHome();
+      //agHelper.RefreshPage("getReleaseItems");
+
+      cy.SearchApp(applicationName);
+
+      cy.wait("@getConsolidatedData").then((intercept) => {
+        const { application, pages } = intercept.response.body.data.pages.data;
+        const defaultPage = pages.find((p) => p.isDefault);
+
+        cy.location().should((loc) => {
+          expect(loc.pathname).includes(
+            `/applications/${application.id}/pages/${defaultPage.id}`,
+          );
+        });
+
+        cy.Createpage("NewPage");
+        cy.get("@currentPageId").then((currentPageId) => {
+          cy.location().should((loc) => {
+            expect(loc.pathname).includes(
+              `/applications/${application.id}/pages/${currentPageId}`,
+            );
+          });
+          entityExplorer.DragDropWidgetNVerify(draggableWidgets.TEXT);
+
+          cy.updateCodeInput(
+            ".t--property-control-text",
+            `{{appsmith.URL.pathname}}`,
+          );
+
+          cy.get(".t--draggable-textwidget .bp3-ui-text").should(
+            "contain.text",
+            `/applications/${application.id}/pages/${currentPageId}/edit`,
+          );
+
+          cy.get(".t--upgrade").click({ force: true });
+
+          cy.get(".t--upgrade-confirm").click({ force: true });
+
+          cy.wait("@getConsolidatedData").then((intercept) => {
+            const { application, pages } =
+              intercept.response.body.data.pages.data;
+
+            const currentPage = pages.find((p) => p.id === currentPageId);
+
+            cy.location().should((loc) => {
+              expect(loc.pathname).includes(
+                `/app/${application.slug}/${currentPage.slug}-${currentPage.id}`,
+              );
+            });
+
+            cy.get(".t--draggable-textwidget .bp3-ui-text").should(
+              "contain.text",
+              `/app/${application.slug}/${currentPage.slug}-${currentPage.id}/edit`,
+            );
+
+            cy.visit(
+              `/${application.slug}/${currentPage.slug}-${currentPage.id}/edit`,
+            );
+
+            cy.location().should((loc) => {
+              expect(loc.pathname).includes(
+                `/app/${application.slug}/${currentPage.slug}-${currentPage.id}/edit`,
+              );
+            });
+          });
+        });
+      });
+    });
+  });
+
+  it("4. Checks redirect url", () => {
+    cy.url().then((url) => {
+      homePage.Signout(true);
+      agHelper.VisitNAssert(url + "?embed=true&a=b", "getConsolidatedData");
+      agHelper.AssertURL(
+        `?redirectUrl=${encodeURIComponent(url + "?embed=true&a=b")}`,
+      );
+    });
+  });
+});
